@@ -1,6 +1,6 @@
 / constant word address
 
-.globl vx, ivx
+.globl ivx, vx
 ivx:	tst	-(r5)
 vx:	mov	(r3)+,r1
 	asr	r1

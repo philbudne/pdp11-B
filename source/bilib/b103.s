@@ -1,6 +1,7 @@
 / =& operator
 
 .globl b103
+.globl cksto
 b103:	mov	-(r5),r0
 	jsr	pc,cksto
 	com	r0
