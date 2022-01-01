@@ -18,7 +18,7 @@
 	beq	1f
 	swab	ch
 	sys	write; ch; 02
-	0403
+	br	2f
 1:
 	sys	write; ch; 01
 2:
