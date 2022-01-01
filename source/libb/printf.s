@@ -1,7 +1,8 @@
 / B library - printf
 
-.globl .putcha, .printn, .char
-.globl .printf
+.globl .printf, s, va, c, b1, iva, x, .char, n2, a, u7, n3, b5, f
+.globl ia, b4, n11, ix, .putcha, t, u3, z, .printn, ic, n6
+.globl c, s, u10, chain
 
 / stack:
 / 40	j
@@ -73,7 +74,7 @@
 	iva; 30
 	va; 6
 	b1
-loop:
+l2:
 l1:
 		/ reset stack
 	s; 42
@@ -88,12 +89,12 @@ l1:
 		/ if not (c != '%') goto l3
 	c; 45	/ '%'
 	b5
-	f l3
+	f; l3
 		/ if not (c == 0) goto l4
 	ia; 34
 	c; 0
 	b4
-	f l4
+	f; l4
 		/ return
 	n11
 l4:
@@ -119,7 +120,8 @@ l3:
 	n3
 	b1
 		/ switch c
-	z l5
+	z; l5
+l11:
 l7:	/ case %d %o format
 		/ printn(x, c == 'o' ? 8 : 10)
 	ix; .printn; n2
@@ -192,7 +194,7 @@ l5:	4
 		/ return - not reached
 	n11
 
-8:	loop
+8:	l2
 
 	/ ???
 9:	jsr	r5,chain
