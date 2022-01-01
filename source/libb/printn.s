@@ -1,5 +1,13 @@
 / B library - printn
 
+.globl	.printn
+
+.globl	.putcha
+
+.globl	a, b1, b14, b16, b20, b7, c, chain, f, ia, iva, ix
+.globl	n11, n2, n3, s, t, u10, u2, va
+
+
 / stack:
 / 12	d
 / 10	a
