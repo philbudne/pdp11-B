@@ -85,7 +85,7 @@ l1:	/ n >= 0
 	f; l4
 	ix; .printn
 	n2
-	a; 4
+	a; 10	// PLB was 4, changed to match binary
 	a; 6
 	n3
 l4:
