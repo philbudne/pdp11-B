@@ -74,8 +74,8 @@
 	iva; 30
 	va; 6
 	b1
-l2:
 l1:
+l2:
 		/ reset stack
 	s; 42
 		/ c = char(fmt,i++)
@@ -121,8 +121,8 @@ l3:
 	b1
 		/ switch c
 	z; l5
-l11:
-l7:	/ case %d %o format
+l7:
+l11:	/ case %d %o format
 		/ printn(x, c == 'o' ? 8 : 10)
 	ix; .printn; n2
 	a; 32
