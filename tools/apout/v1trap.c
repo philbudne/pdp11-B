@@ -73,9 +73,10 @@ void v1trap()
   int whence;
   u_int16_t argbase;
   int trapnum;
-  long larg;
+  u_int32_t larg;		/* PDP-11 long */
   char *buf, *buf2;
   char *fmode;			/* used with fdopen only */
+  off_t off;
 
   struct stat stbuf;		/* used in STAT */
   struct tr_v1stat *t1;		/* used in STAT */
@@ -130,8 +131,8 @@ void v1trap()
       i = -1;
       break;
 
-#define EPOCH71	31536000		/* # seconds from 1970 to 1971 */
-#define EPOCH72	63072000		/* # seconds from 1970 to 1972 */
+#define EPOCH71	31536000		/* # seconds from 1970 to 1971 (V1/V2) */
+#define EPOCH72	63072000		/* # seconds from 1970 to 1972 (V3) */
     case V1_SMDATE:
       buf = xlate_filename((char *)&dspace[uarg1]);
       if (buf[0] == '\0') buf = ".";	/* Not documented anywhere */
@@ -143,9 +144,17 @@ void v1trap()
 					/* Copy access time to preserve it */
       tval[0].tv_sec= stbuf.st_atime; tval[0].tv_usec=0;
       larg= (AC << 16) | (MQ & 0xffff); /* Get mod time in 60ths of a second */
-      TrapDebug((dbg_file, " %ld -> ", larg));
-      larg= larg/60 + EPOCH72;		/* Convert to seconds since 1970 */
-      TrapDebug((dbg_file, " 0x%lx ", larg));
+      TrapDebug((dbg_file, " %u -> ", larg));
+      /*
+       * PLB: I think the B .a files are from V2
+       * (libb.a has "hog" syscall, an early name for an early version of nice,
+       *  which only appears under the old name in the 2nd Edition of the manual).
+       * This (plus making larg u_int32_t, gives what I think are
+       * reasonable dates for files extracted from libb.a and bilib.a,
+       * which is what matters most (to me) for this repo...
+       */
+      larg= larg/60 + EPOCH71;		/* Convert to seconds since 1970 */
+      TrapDebug((dbg_file, " %#x ", larg));
       tval[1].tv_sec= larg; tval[1].tv_usec=0;
       i=utimes(buf, tval);
       TrapDebug((dbg_file, " and %d for utimes ", i));
@@ -164,25 +173,25 @@ void v1trap()
       whence = uarg3;
       switch (uarg3) {
 	case 0:
-	  larg = uarg2; break;
+	  off = uarg2; break;
 	case 1:
 	case 2:
-	  larg = sarg2; break;
+	  off = sarg2; break;
       }
 
-      if (ValidFD(sarg1) && isdev[sarg1]) larg*= 512;
+      if (ValidFD(sarg1) && isdev[sarg1]) off*= 512;
 
 #ifdef STREAM_BUFFERING
       if (ValidFD(sarg1) && stream[sarg1]) {
-	i = fseek(stream[sarg1], larg, whence);
+	i = fseek(stream[sarg1], off, whence);
 	if (i == 0)
 	  i = ftell(stream[sarg1]);
       } else
 #endif
-	i = lseek(sarg1, larg, whence);
+	i = lseek(sarg1, off, whence);
 
-      TrapDebug((dbg_file, " on fd %d amt %ld whence %d return %d ",
-		 				sarg1, larg, whence, i));
+      TrapDebug((dbg_file, " on fd %d amt %zu whence %d return %d ",
+						sarg1, off, whence, i));
       if (i != -1) i = 0;
       regs[0] = i;
       break;
