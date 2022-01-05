@@ -1,8 +1,10 @@
 #!/bin/sh
 
-# build apout
-(cd tools/apout; make)
-export APOUT_ROOT=$PWD/fs/root
+# compare .o files inside original .a files
+# with the results of assembling the reconstructed source files.
+
+# only ctime, printn, and printf differ,
+# and all only in the symbol sections of the files.
 
 # extract /usr/lib/libb.a
 rm -rf libb

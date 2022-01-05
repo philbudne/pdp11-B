@@ -10,6 +10,9 @@ all:
 hello:	all
 	-cd source/b711; ./run.sh hello.b
 
+checklib: all
+	./build
+
 clean:
 	make -C tools/apout clean
 	make -C tools/das clean
@@ -18,3 +21,4 @@ clean:
 	make -C source/b711 clean
 	make -C source/libb clean
 	make -C source/bilib clean
+	rm -rf bilib libb
