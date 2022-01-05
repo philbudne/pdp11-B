@@ -7,7 +7,7 @@
 // and Robert Swierczek https://github.com/rswier/pdp11-B.git
 
 // extern interpreter routines (bilib.a)
-.globl ix, mcall
+.globl x, n1
 
 // extern data in brt2.s
 .globl stke
@@ -39,11 +39,12 @@
 	mov	sp,.argv	// set up arg vector
 	jmp	*(r3)+
 
-start:	ix; .main
-	mcall
-
-	ix; .exit
-	mcall
+start:
+	// s;0 ??
+	x; .main
+	n1
+	x; .exit		// ix??
+	n1
 
 // here on error opening files. say something??
 // .exit routine makes no effort to return status,
