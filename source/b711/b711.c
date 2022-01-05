@@ -1,16 +1,25 @@
-/* b.c - B compiler for PDP-7 Unix
+/* b711.c - B compiler for PDP-11 Unix
+   hacked up by Phil Budne, Jan 2021 from:
 
+   b.c - B compiler for PDP-7 Unix
    Implemented in a subset of the C language compatible with B.
    Coding style and organization based on lastc1120c.c
  
    (C) 2016 Robert Swierczek, GPL3
  
    To compile hello.b:
-      gcc -Wno-multichar b.c -o b
-      ./b hello.b hello.s
-      perl as7 --out a.out bl.s hello.s bi.s
-      perl a7out a.out
+      make
+      ./run.sh hello.b
+
+   NOTE! output requires post processing w/ post.awk(!)
 */
+
+/*
+ * PLB TODO:
+ * printf disassembly shows two 's' ops!!? figure out why!!
+ * add << >> ++ -- =| =& =>> =<< =+ =- =% =* =/
+ * (=== =!= =<= =< =>= => not implemented in bilib)
+ */
 
 #ifdef _WIN32
 #include <io.h>
@@ -29,7 +38,6 @@ int fout = 1;
 void pexpr();
 void error(int code);
 void stmt();
-void blkend();
 void stmtlist();
 void getcc();
 void extdef();
@@ -80,7 +88,6 @@ main(int argc, char **argv) {
   while (!eof) {
     ns = symtab + 51;
     extdef();
-    blkend();
   }
   return(nerror!=0);
 }
@@ -255,7 +262,7 @@ void getcc() {
   cval = c;
   if ((c = mapch('\'')) < 0)
     return;
-  cval = cval * 512 + c;
+  cval = cval*256 + c;
   if (mapch('\'') >= 0)
     error('cc');
 }
@@ -266,17 +273,23 @@ getstr() {
   i = 1;
 loop:
   if ((c = mapch('"')) < 0) {
-    number(2048);
-    write('\n');
+    write('\\e');
     return(i);
   }
-  if ((d = mapch('"')) < 0) {
-    number(c*512+4);
-    write('\n');
-    return(i);
-  }
-  number(c*512+d);
-  write('\n');
+  /* remap to assembler <> escapes */
+  /* note: mapch handles *( and *) */
+  if (c == '\n')	// from *n
+    write('\\n');
+  else if (c == '\t')	// from *t
+    write('\\t');
+  else if (c == 04)	// from *e
+    write('\\e');
+  else if (c == 0)	// from *0
+    write('\\0');
+  else if (c == '\r')	// from *r
+    write('\\r');
+  else
+    write(c);
   i = i+1;
   goto loop;
 }
@@ -321,36 +334,62 @@ mapch(c) {
   return(a);
 }
 
-void expr(lev) {
-  extern peeksym, *csym, cval, isn;
+/* signal that last auto/ext is an lvalue */
+void plv() {
+  write('PL');
+  write('V\n');
+}
+
+void expr(lev,lvalue) {
+  extern peeksym, *csym, cval, isn, cleanup;
   auto o;
 
   o = symbol();
  
   if (o==21) { /* number */
+#if 0 // PLB see below
 case21:
-    if ((cval & 017777)==cval) {
-      gen('c',cval); /* consop */
-      goto loop;
+#endif
+    if (cleanup) {
+      write('i');
+      cleanup = 0;
     }
-    gen('n',5); /* litrl */
-    number(cval);
-    write('\n');
+    garg('c',cval); /* consop */
     goto loop;
   }
 
   if (o==122) { /* string */
-    write('x ');
+    // PLB undebugged on PDP-11
+    // put in data segment and use assembler <...>???
+    // (would not work w/ sep I/D)
+    // use string constant instead of char pairs!!!!
+    if (cleanup) {
+      write('i');
+      cleanup = 0;
+    }
+    write('x;');
+    write('1f');
+    write('\n');
+
+    write('.d');
+    write('at');
+    write('a\n');
+
+    write('1:');
     write('.+');
     write('2\n');
-    write('t ');
-    write('2f');
-    write('\n');
-    write('.+');
-    write('1\n');
+
+    write('<');
     getstr();
-    write('2:');
-    write('\n');
+    write('>\n');
+
+    write('.e');
+    write('ve');
+    write('n\n');
+
+    write('.t');
+    write('ex');
+    write('t\n');
     goto loop; 
   }
 
@@ -364,17 +403,23 @@ case21:
         isn = isn+1;
       }
     }
-    if (*csym==5) /* auto */
-      gen('a',csym[1]);
+    if (cleanup) {
+      write('i');
+      cleanup = 0;
+    }
+    if (lvalue)
+      write('v');
+    if (*csym==5) { /* auto */
+      garg('a',csym[1]);
+    }
     else {
-      write('x ');
+      write('x');
+      write(';');
       if (*csym==6) { /* extrn */
         write('.');
         name(csym+2);
       } else { /* internal */
-        write('1f');
-        write('+');
-        number(csym[1]);
+        olbl(csym[1]);
       }
       write('\n');
     }
@@ -382,31 +427,32 @@ case21:
   }
  
   if (o==34) { /* ! */
-    expr(1);
+    expr(1,0);
     gen('u',4); /* unot */
     goto loop;
   }
 
   if (o==41) { /* - */
+#if 0 /* PLB Thompson grammar doesn't include - constant syntax */
     peeksym = symbol();
     if (peeksym==21) { /* number */
       peeksym = -1;
       cval = -cval;
       goto case21;
     }
-    expr(1);
+#endif
+    expr(1,0);
     gen('u',2); /* umin */
     goto loop;
   }
  
   if (o==47) { /* & */
-    expr(1);
-    gen('u',1); /* uadr */
+    expr(1,1); /* lvalue! */
     goto loop;
   }
  
   if (o==42) { /* * */
-    expr(1);
+    expr(1,0);
     gen('u',3); /* uind */
     goto loop;
   }
@@ -422,47 +468,48 @@ loop:
   o = symbol();
 
   if (lev>=14 & o==80) { /* = */
-    expr(14);
+    plv();
+    expr(14,0);
     gen('b',1); /* asg */
     goto loop;
   }
   if (lev>=10 & o==48) { /* | ^ */
-    expr(9);
+    expr(9,0);
     gen('b',2); /* bor */
     goto loop;
   }
   if (lev>=8 & o==47) { /* & */
-    expr(7);
+    expr(7,0);
     gen('b',3); /* band */
     goto loop;
   }
   if (lev>=7 & o>=60 & o<=61) { /* == != */
-    expr(6);
+    expr(6,0);
     gen('b',o-56); /* beq bne */
     goto loop;
   }
   if (lev>=6 & o>=62 & o<=65) { /* <= < >= > */
-    expr(5);
+    expr(5,0);
     gen('b',o-56); /* ble blt bge bgt */
     goto loop;
   }
   if (lev>=4 & o>=40 & o<=41) { /* + - */
-    expr(3);
+    expr(3,0);
     gen('b',o-28); /* badd bmin */
     goto loop;
   }
   if (lev>=3 & o>=42 & o<=43) { /* * / */
-    expr(2);
+    expr(2,0);
     gen('b',o-27); /* bmul bdiv */
     goto loop;
   }
   if (lev>=3 & o==44) { /* % */
-    expr(2);
+    expr(2,0);
     gen('b',14); /* bmod */
     goto loop;
   }
   if (o==4) { /* [ */
-    expr(15);
+    expr(15,0);
     if (symbol() != 5)
       error('[]');
     gen('n',4); /* vector */
@@ -471,12 +518,12 @@ loop:
   if (o==6) { /* ( */
     o = symbol();
     if (o==7) /* ) */
-      gen('n',1); /* mcall */
+      gen('n',0); /* mcall */
     else {
       gen('n',2); /* mark */
       peeksym = o;
       while (o!=7) {
-        expr(15);
+        expr(15,0);
         o = symbol();
         if (o!=7 & o!=9) { /* ) , */
           error('ex');
@@ -487,13 +534,14 @@ loop:
     }
     goto loop;
   }
- 
   peeksym = o;
 }
 
 void pexpr() {
+  extern cleanup;
   if (symbol()==6) { /* ( */
-    expr(15);
+    expr(15,0);
+    cleanup = 1;
     if (symbol()==7) /* ) */
       return;
   }
@@ -513,11 +561,11 @@ void declare(kw) {
       csym[1] = nauto;
       o = symbol();
       if (kw==5 & o==21) { /* auto & number */
-        gen('y',nauto); /* aryop */
-        nauto = nauto + cval;
+        garg('y',nauto); /* aryop */
+        nauto = nauto + 2*cval;
         o = symbol();
       }
-      nauto = nauto+1;
+      nauto = nauto+2;
     }
     if (o!=9) /* , */
       goto done;
@@ -530,7 +578,7 @@ syntax:
 }
 
 void extdef() {
-  extern peeksym, *csym, cval, nauto;
+  extern peeksym, *csym, cval, nauto, cleanup;
   auto o, c;
 
   o = symbol();
@@ -548,8 +596,8 @@ void extdef() {
  
   if (o==2 | o==6) { /* $( ( */
     write('.+');
-    write('1\n');
-    nauto = 2;
+    write('2\n');
+    nauto = 4;
     if (o==6) { /* ( */
       declare(8); /* param */
       if ((o=symbol())!=2) /* $( */
@@ -558,9 +606,10 @@ void extdef() {
     while((o=symbol())==19 & cval<10) /* auto extrn */
       declare(cval);
     peeksym = o;
-    gen('s',nauto); /* setop */
+    garg('s',nauto); /* setop */
+    cleanup = 0;
     stmtlist();
-    gen('n',7); /* retrn */
+    gen('n',011); /* retrn (novalue) */
     return;
   }
 
@@ -592,7 +641,7 @@ void extdef() {
     if (o!=5) /* ] */
       goto syntax;
     write('.+');
-    write('1\n');
+    write('2\n');
     if ((o=symbol())==1) /* ; */
       goto done;
     while (o==21 | o==41) { /* number - */
@@ -616,7 +665,7 @@ done:
     if (c>0) {
       write('.=');
       write('.+');
-      number(c);
+      number(c);			/* XXX 2*? */
       write('\n');
     }
     return;
@@ -631,7 +680,7 @@ syntax:
 }
 
 void stmtlist() {
-  extern peeksym, eof;
+  extern peeksym, eof, cleanup;
   auto o;
 
   while (!eof) {
@@ -643,8 +692,8 @@ void stmtlist() {
   error('$)'); /* missing $) */
 }
 
-void stmt() {
-  extern peeksym, peekc, *csym, cval, isn, nauto;
+void stmt2() {
+  extern peeksym, peekc, *csym, cval, isn, nauto, cleanup;
   auto o, o1, o2;
 
 next:
@@ -657,7 +706,7 @@ next:
  
   if (o==1 | o==3) /* ; $) */
     return;
- 
+
   if (o==2) { /* $( */
     stmtlist();
     return;
@@ -666,15 +715,18 @@ next:
   if (o==19) { /* keyword */
 
     if (cval==10) { /* goto */
-      expr(15);
+      expr(15,0);   /* XXX lvalue?? */
       gen('n',6); /* goto */
       goto semi;
     }
 
     if (cval==11) { /* return */
-      if ((peeksym=symbol())==6) /* ( */
+      if ((peeksym=symbol())==6) { /* ( */
         pexpr();
-      gen('n',7); /* retrn */
+	gen('n',7); /* retrn value */
+      }
+      else
+	gen('n',011); /* retrn novalue */
       goto semi;
     }
 
@@ -696,6 +748,7 @@ next:
       }
       peeksym = o;
       label(o1);
+      cleanup = 1;
       return;
     }
 
@@ -710,6 +763,7 @@ next:
       stmt();
       jump(o1);
       label(o2);
+      cleanup = 1;
       return;
     }
 
@@ -722,7 +776,7 @@ next:
     if (!*csym) {
       *csym = 2; /* param */
       csym[1] = isn;
-      isn = isn+1;
+      isn = isn+1;			/* XXX +2? */
     } else if (*csym != 2) {
       error('rd');
       goto next;
@@ -732,8 +786,13 @@ next:
   }
 
   peeksym = o;
-  expr(15);
-  gen('s',nauto); /* setop */
+  expr(15,0);
+#if 0
+  garg('s',nauto); /* setop */
+  cleanup = 0;
+#else
+  cleanup = 1;
+#endif
 
 semi:
   o = symbol();
@@ -745,57 +804,55 @@ syntax:
   goto next;
 }
 
-void blkend() {
-  extern isn;
-  auto i;
+void stmt() {
+  extern cleanup;
 
-  if (!isn)
-    return;
-  write('1:');
-  i = 0;
-  while (i < isn) {
-    write('l');
-    number(i);
-    write('\n');
-    i = i+1;
-  }
-  isn = 0;
+  stmt2();
+  cleanup = 1;
 }
 
+/* generate a numbered op */
 gen(o,n) {
   write(o);
-  write(' ');
   number(n);
   write('\n');
 }
 
-jumpc(n) {
-  write('f '); /* ifop */
-  write('1f');
-  write('+');
+/* generate opcode folloed by number argument */
+garg(o,n) {
+  write(o);
+  write(';');
   number(n);
+  write('\n');
+}
+
+olbl(n) {
+  write('l');
+  number(n);
+}
+
+jumpc(n) {
+  write('f;'); /* ifop */
+  olbl(n);
   write('\n');
 }
 
 jump(n) {
-  write('x ');
-  write('1f');
-  write('+');
-  number(n);
-  gen('\nn',6); /* goto */
-}
-
-label(n) {
-  write('l');
-  number(n);
-  write('=.');
+  write('t;');
+  olbl(n);
   write('\n');
 }
 
+label(n) {
+  olbl(n);
+  write(':\n');
+}
+
+/* PLB: must be octal for ops */
 printn(n) {
-  if (n > 9) {
-    printn(n / 10);
-    n = n % 10;
+  if (n > 7) {
+    printn(n >> 3);
+    n = n & 7;
   }
   write(n + '0');
 }
@@ -876,6 +933,7 @@ int line = 1;
 int *csym;
 int *ns;
 int cval;
-int isn;
+int isn = 1; /* PLB start at l1 */
 int nerror;
 int nauto;
+int cleanup;
