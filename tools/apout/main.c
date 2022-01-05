@@ -54,6 +54,7 @@ main(int argc, char **argv)
     assert(sizeof(int32_t)==4); assert(sizeof(u_int32_t)==4);
 
     if (argc < 2) usage();
+    if (!strcmp(argv[1], "-h")) usage();
     if (!strcmp(argv[1], "-help")) usage();
     if (!strcmp(argv[1], "--help")) usage();
 
