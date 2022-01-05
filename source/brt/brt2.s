@@ -1,5 +1,6 @@
 // brt2.s -- loaded at end of executable
 
+.bss
 .globl stke
 
 stksiz = 512.	/ stack size for B stack (r5)
