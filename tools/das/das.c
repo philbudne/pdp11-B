@@ -1,3 +1,15 @@
+// from http://squoze.net/B/tools/das.c (Angelo Papenhoff)
+// mangled by Phil Budne for B
+// assumes V2/V3 era environment, other B-based assumptions!!
+// (look for CROCK)
+
+// XXX TODO?
+// branch instructions not getting symbols
+// dump sys args as data!!
+// attempt symbol lookup in dw (need segment?)
+// assume loaded at 16K??
+// generate "tAAA" labels (needs two passes)
+
 /* WARNING: assumes machine is little endian */
 
 /*
@@ -5,11 +17,29 @@
  *      it could do more, but it's all I needed
  */
 
-#include <u.h>
-#include <libc.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
 
-typedef u16int word;
-typedef u8int byte;
+typedef u_int16_t word;
+typedef u_int8_t byte;
+
+void
+sysfatal0(char *str) {
+    fprintf(stderr, "%s\n", str);
+    exit(1);
+}
+
+void
+sysfatal1(char *fmt, char *arg) {
+    fprintf(stderr, fmt, arg);
+    fputc('\n', stderr);
+    exit(1);
+}
+//end PLB
 
 #define W(x) ((x) & 0177777)
 
@@ -43,13 +73,16 @@ int addr;
 
 enum	/* Instruction type */
 {
+	None = 0,
 	Binary,
 	Unary,
 	RegBinary,
 	Reg,
-	Trap,
+	Imm,
+	Sys,
 	Br,
 	Sob,
+	Unk,
 
 	Byte = 01000,
 };
@@ -60,6 +93,7 @@ struct instdef
 	word w, m;
 	int type;
 } instdefs[] = {
+	{ "..",		0040000, 0177777, None }, /* CROCK! (bic r0, r0) */
 	{ "mov",	0010000, 0070000, Binary|Byte },
 	{ "cmp",	0020000, 0070000, Binary|Byte },
 	{ "bit",	0030000, 0070000, Binary|Byte },
@@ -79,7 +113,7 @@ struct instdef
 	{ "rol",	0006100, 0077700, Unary|Byte },
 	{ "asr",	0006200, 0077700, Unary|Byte },
 	{ "asl",	0006300, 0077700, Unary|Byte },
-	{ "mark",	0006400, 0177700, 0 },		// TODO
+	{ "mark",	0006400, 0177700, Imm },
 	{ "mfpi",	0006500, 0177700, Unary },
 	{ "mfpd",	0106500, 0177700, Unary },
 	{ "mtpi",	0006600, 0177700, Unary },
@@ -107,23 +141,104 @@ struct instdef
 	{ "bcc",	0103000, 0177400, Br },
 	{ "bcs",	0103400, 0177400, Br },
 	{ "jsr",	0004000, 0177000, RegBinary },
-	{ "emt",	0104000, 0177400, Trap },
-	{ "trap",	0104400, 0177400, Trap },
+	{ "emt",	0104000, 0177400, Imm },
+	{ "sys",	0104400, 0177400, Sys }, // (trap instr)
 	{ "jmp",	0000100, 0177700, Unary },
 	{ "rts",	0000200, 0177770, Reg },
-	{ "spl",	0000230, 0177770, 0 },		// TODO
-	{ "ccc",	0000240, 0177760, 0 },		// TODO
-	{ "scc",	0000260, 0177760, 0 },		// TODO
+	{ "spl",	0000230, 0177770, Imm },
+	{ "ccc",	0000240, 0177760, Unk }, // TODO
+	{ "scc",	0000260, 0177760, Unk }, // TODO
 	{ "swab",	0000300, 0177700, Unary },
-	{ "halt",	0000000, 0177777, 0 },
-	{ "wait",	0000001, 0177777, 0 },
-	{ "rti",	0000002, 0177777, 0 },
-	{ "bpt",	0000003, 0177777, 0 },
-	{ "iot",	0000004, 0177777, 0 },
-	{ "reset",	0000005, 0177777, 0 },
-	{ "rtt",	0000006, 0177777, 0 },
-	{ nil, 0, 0, 0 }
+	{ "halt",	0000000, 0177777, None },
+	{ "wait",	0000001, 0177777, None },
+	{ "rti",	0000002, 0177777, None },
+	{ "bpt",	0000003, 0177777, None },
+	{ "iot",	0000004, 0177777, None },
+	{ "reset",	0000005, 0177777, None },
+	{ "rtt",	0000006, 0177777, None },
+	{ NULL, 0, 0, 0 }
 };
+
+// NOTE!! V2 syscalls are all that matter for extant B library
+struct syscall {
+    int args;
+    char *name;
+} syscalls[] = {
+	{ 0, "rele" },		/* 0. (not in assembler; indir in v4 (1 arg) */
+	{ 0, "exit" },		/* 1. status in r0 */
+	{ 0, "fork" },		/* 2. */
+	{ 2, "read" },		/* 3. (fd in r0) */
+	{ 2, "write" },		/* 4. (fd in r0) */
+	{ 2, "open" },		/* 5. */
+	{ 0, "close" },		/* 6. (fd in r0) */
+	{ 0, "wait" },		/* 7. */
+	{ 2, "creat" },		/* 8. */
+	{ 2, "link" },		/* 9. */
+	{ 1, "unlink" },	/* 10. */
+	{ 2, "exec" },		/* 11. */
+	{ 1, "chdir" },		/* 12. */
+	{ 0, "time" },		/* 13. */
+	{ 2, "makdir" },	/* 14.  (renamed to mknod w/ 3 args in v4) */
+	{ 2, "chmod" },		/* 15. */
+	{ 2, "chown" },		/* 16. (3 args in v7) */
+	{ 1, "break" },		/* 17. */
+	{ 2, "stat" },		/* 18. */
+	{ 2, "seek" },		/* 19. (fd in r0; 3 args (lseek) in v7) */
+	{ 2, "tell" },		/* 20. (fd in r0, never implemented?) getpid in v7 */
+	{ 2, "mount" },		/* 21. */
+	{ 1, "umount" },	/* 22. */
+	{ 0, "setuid" },	/* 23. (uid in r0) */
+	{ 0, "getuid" },	/* 24. */
+	{ 0, "stime" },		/* 25. (time in AC-MQ) */
+	{ 1, "quit" },		/* 26. (ptrace in v6) */
+	{ 1, "intr" },		/* 27. (nosys in v6; alarm in v7) */
+	{ 1, "fstat" },		/* 28. (fd in r0) */
+	{ 1, "cemt" },		/* 29. (nosys v6; pause in v7) */
+	{ 1, "mdate" },		/* 30. (date in AC-MQ); utime in v7; added in PWB?? */
+	{ 1, "stty" },		/* 31. (fd in r0) */
+	{ 1, "gtty" },		/* 32. (fd in r0) */
+	{ 1, "ilgins" },	/* 33. (nosys in v6; access in v7) */
+	{ 0, "hog" },		/* 34. (renamed to nice in v3) */
+	{ 0, "sleep" },		/* 35. (60ths in r0, NIAS; ftime in v7) */
+	{ 0, "sync" },		/* 36. (not in assembler) */
+	{ 0, "kill" },		/* 37. pid in r0 */
+	/* new in 3rd Edition manual: */
+	{ 0, "csw" },		/* 38. (not in assembler) */
+	{ 0, "boot"},		/* 39. (not in assembler); "setpgrp" in v7 */
+	{ 1, "fpe"},		/* 40. (NIAS; nosys in v6; v7 says was "tell"?!) */
+	{ 0, "dup" },		/* 41. (fd in r0) */
+	/* new in 4th Edition manual: */
+	{ 0, "pipe" },		/* 42. v4 (noop in nsys) */
+	{ 1, "times" },		/* 43. v4 */
+	{ 4, "profil" },	/* 44. v4 (not in assembler; noop in nsys) */
+	{ 0, "tiu" },		/* 45. (name from nsys/v6; getfp in v7m; lock in svr1) */
+	/*		CB 2.1 syscb: umask=1, reboot=2, lock=3, sprofil=4, ucore=5, getcsw=? */
+	{ 0, "setgid" },	/* 46. v4 (not in assembler) */
+	{ 0, "getgid" },	/* 47. v4 (not in assembler)*/
+	{ 2, "signal" },	/* 48. v4 */
+	/* from v7 sysent.c: */
+	/* 49 = reserved for USG (msg in CB 2.1; IPC Messages)
+	/* 50 = reserved for USG (Reserved for local use in SVR1) */
+	/* 51 = acct (1 arg) */
+	/* 52 = phys (4 args); SVR1 shm (in CB 2.3?) */
+	/* 53 = lock (1 arg); SVR1 sem */
+	/* 54 = ioctl (3 args) */
+	/* 55 = readwrite ("in abeyance"); reboot in 4.1BSD */
+	/* 56 = mpxcall (2 args) */
+	/* 57 = reserved for USG (uts in SVR1 (uname, ustat); in Sys III?) */
+	/*	CB 2.1 "cbsys": uname=0; "pwbsys" (0=uname, 1=udata, 2=ustat) */
+	/* 58 = reserved for USG: {get,free,dis,swit}maus in CB 2.1 */
+	/*		"multi-access user space"; dedicated portion of memory */
+	/*		swap functions in SVR2; "local functions" in 2.9BSD */
+	/* 59 = exece (3 args) */
+	/* 60 = umask (1 arg) */
+	/* 61 = chroot (1 arg) */
+	/* 62 = SVR1 fcntl (in CB-2.1, Sys III); v7m ttlocal (2 args) */
+	/*	"reserved to local sites" in 4.1BSD */
+	/* 63 = Sys III: ulimit; v7m getfp (2 args) [prproc in "nsys"!] */
+	/*	semas in CB 2.3, "used internally" in v7m, 4.1BSD */
+};
+#define NSYS (sizeof(syscalls)/sizeof(syscalls[0]))
 
 struct instdef*
 getinst(word inst)
@@ -132,7 +247,7 @@ getinst(word inst)
 	for(i = instdefs; i->name; i++)
 		if((inst & i->m) == i->w)
 			return i;
-	return nil;
+	return NULL;
 }
 
 struct sym*
@@ -142,18 +257,99 @@ findsym(word type, word val)
 	for(s = symtab; s < &symtab[nsym]; s++)
 		if((s->type&7) == (type&7) && s->val == val)
 			return s;
-	return nil;
+	return NULL;
 }
 
-word
-fetch(void)
+// fetch and format an instruction operand, or non-instruction word
+char*
+fetch(int pcidx)
 {
-	word w;
-	w = mem[addr/2];
+	static char buf[32];
+	char *s = buf;
+	word w = mem[addr/2];
+	word r = 0;
+	word rt = 0;
+	struct sym *sp;
+	short off;
+	word oaddr = addr;
+
+	if (reloc) {
+	    r = reloc[addr/2];
+	    rt = r & 016;
+	}
+	off = w;			// signed
 	addr += 2;
-	return w;
+
+	if(pcidx) {
+		w = addr + off;
+		if (r == 01) // abs, pc relative
+			w += 040000;	/* XXX CROCK */
+		off = 0;
+	}
+	if(rt) {
+		if(rt == 010) {			// ext
+			s += sprintf(buf, "%.8s", symtab[r>>4].name);
+			if(off > 0)
+				*s++ = '+';
+			if(off != 0)
+				s += sprintf(s, "%o", off);
+		}
+		else { // rt != 010
+			struct sym *sp;
+			// libb.a and bilib.a only have text;
+			if(r == 2 && w >= 040000)
+				w -= 040000;
+			if((rt == 2 || rt == 4 || rt == 6) &&
+			   (sp = findsym((rt>>1)+1, w))) {
+				s += sprintf(s, "%.8s", sp->name);
+			}
+			else { // no symbol
+				off = w;
+				switch (rt) {
+				case 2:		// text
+					if (w - addr < 5) {
+						s += sprintf(s, ".");
+						off = w - oaddr;
+					}
+					else
+						s += sprintf(s, "TEXT");
+					break;
+				case 4:		// data
+					s += sprintf(s, "DATA");
+					break;
+				case 6:		// bss
+					s += sprintf(s, "BSS");
+					break;
+				default:
+					s += sprintf(s, "RT%#o", rt);
+					break;
+				}
+
+				if (off > 0)
+					s += sprintf(s, "+%o", off);
+				else if (off < 0)
+					s += sprintf(s, "-%o", -off);
+			} // no symbol
+		} // rt != 010
+	} // rt != 0
+	else {			// no relocation (absolute)
+		if (w == 0177300)
+			s += sprintf(s, "DIV");
+		else if (w == 0177302)
+			s += sprintf(s, "AC");
+		else if (w == 0177304)
+			s += sprintf(s, "MQ");
+		else if (w == 0177314)
+			s += sprintf(s, "LSH");
+		else
+			s += sprintf(s, "%o", w);
+	}
+	return buf;
 }
 
+// format mode/register operand in m into s
+// (can be called with just register)
+// returns updated pointer
 char*
 disop(char *s, int m)
 {
@@ -170,34 +366,28 @@ disop(char *s, int m)
 		*s++ = '*';
 	switch(m & 7){
 	case 0:
-		s += sprint(s, "%s", rstr[r]);
+		s += sprintf(s, "%s", rstr[r]);
 		break;
 	case 1:
-		s += sprint(s, "(%s)", rstr[r]);
+		s += sprintf(s, "(%s)", rstr[r]);
 		break;
 	case 2:
 	case 3:
 		if(r == 7){
-			w = fetch();
-			s += sprint(s, "$%o", w);
+			s += sprintf(s, "$%s", fetch(0));
 		}else
-			s += sprint(s, "(%s)+", rstr[r]);
+			s += sprintf(s, "(%s)+", rstr[r]);
 		break;
 	case 4:
 	case 5:
-//		if(r == 7)
-//			addr -= 2;
-		s += sprint(s, "-(%s)", rstr[r]);
+		s += sprintf(s, "-(%s)", rstr[r]);
 		break;
 	case 6:
 	case 7:
-		w = fetch();
 		if(r == 7)
-			s += sprint(s, "%o", W(w + addr));
-		else if(w & 0100000)
-			s += sprint(s, "-%o(%s)", W(~w+1), rstr[r]);
+			s += sprintf(s, "%s", fetch(1));
 		else
-			s += sprint(s, "%o(%s)", w, rstr[r]);
+			s += sprintf(s, "%s(%s)", fetch(0), rstr[r]);
 		break;
 	}
 	return s;
@@ -209,10 +399,19 @@ dis(word inst)
 	static char line[128];
 	char *s;
 	struct instdef *def;
+	short broff;
+	word braddr;
+	struct sym *sp;
 
 	memset(line, 0, sizeof(line));
+
+	if (inst < 0100) {		/* CROCK! */
+		// compiled B code operand
+		sprintf(line, "%o", inst);
+		return line;
+	}
 	def = getinst(inst);
-	if(def == nil)
+	if(def == NULL)
 		return line;
 	s = line;
 	strcpy(s, def->name);
@@ -242,15 +441,57 @@ dis(word inst)
 		break;
 	case Br:
 		if(inst & 0200)
-			s += sprint(s, "\t%o", W(addr + ((inst|0177400)<<1)));
+			broff = (inst|0177400)<<1;
 		else
-			s += sprint(s, "\t%o", W(addr + ((inst&0377)<<1)));
+			broff = (inst&0377)<<1;
+		*s++ = '\t';
+	branch:
+		braddr = addr - 2 + broff;
+
+		// never happens
+		sp = findsym(02, braddr);
+		if (sp)
+			s += sprintf(s, "%.8s", sp->name);
+		else {
+#if 0
+			// XXX generate local label??
+			s += sprintf(s, ".");
+			broff += 2;	// account for instruction
+			if (broff >= 0)
+				s += sprintf(s, "+%o", broff);
+			else
+				s += sprintf(s, "-%o", -broff);
+#else
+			s += sprintf(s, "TEXT+%o", braddr+2);
+#endif
+		}
 		break;
-	case Trap:
-			s += sprint(s, "\t%o", inst&0377);
+	case Imm:
+		// emt, trap, mark: low 6 bits
+		// spl: low 3 bits
+		s += sprintf(s, "\t%o", inst & ~def->m);
 		break;
 	case Sob:
-		;// TODO
+		*s++ = '\t';
+		s = disop(s, inst>>6 & 07);	// register
+		*s++ = ',';
+		// positive offset for backwards branch
+		braddr = - (inst&077)<<1;
+		goto branch;
+	case Sys:
+		inst &= 0377;
+		if (inst > NSYS)
+			s += sprintf(s, "\t%o", inst);
+		else {
+			s += sprintf(s, "\t%s", syscalls[inst].name);
+			// XXX dump syscalls[inst].args words as data
+		}
+		break;
+	case Unk:
+	default:
+		s += sprintf(s, "\t???");
+	case None:
+		break;
 	}
 	*s = '\0';
 	return line;
@@ -264,54 +505,128 @@ getreloc(word r)
 
 	s = buf;
 	memset(buf, '\0', 32);
-	s += sprint(s, "%2o ", r & 017);
-	if(r & 010)
-		sprint(s, "%.8s", symtab[r>>4].name);
+	s += sprintf(s, "%2o ", r & 017);
+	if(r == 010)
+		sprintf(s, "%.8s", symtab[r>>4].name);
 	return buf;
+}
+
+void
+dw(word a, word w, word r) {
+    // XXX target column for comment
+    // XXX output using fetch()?
+    char hi = w >> 8;
+    char lo = w & 0377;
+    printf("\t\t/ %06o: %06o %d. %c%c %-10s\n",
+	   a, w, (short)w,
+	   (lo >= ' ' && lo <= '~') ? lo : '.',
+	   (hi >= ' ' && hi <= '~') ? hi : '.',
+	   getreloc(r));
 }
 
 void
 textdump(void)
 {
-	word a, w, r;
+	word a, w, r = 0;
 	struct sym *s;
 
+	if (!aout.textsz)
+		return;
+	printf(".text\n");
 	addr = 0;
-	while(addr < memsz){
-		a = addr;
+	while(addr < aout.textsz){
+		word oa = a = addr;
 		s = findsym(02, a);
 		w = mem[a/2];
-		r = reloc[a/2];
-		addr += 2;
-		print("%06o: %06o %-10s ", a, w, getreloc(r));
+		if (reloc)
+			r = reloc[a/2];
 		if(s)
-			print("%.8s:\t", s->name);
-		else
-			print("\t");
-		print("%s\n", dis(w));
+			printf("%.8s:\n", s->name);
+
+		if(r) {	// relocation data? not an instruction.
+			printf("\t%s", fetch(0)); // address
+		}
+		else {
+			addr += 2;
+			printf("\t%s", dis(w)); /* may advance addr */
+		}
 		a += 2;
+
+		dw(oa, w, r);
+
+		// instruction operands
 		while(a < addr){
 			w = mem[a/2];
-			r = reloc[a/2];
-			print("%06o: %06o %-10s\n", a, w, getreloc(r));
+			if (reloc)
+				r = reloc[a/2];
+			dw(a, w, r);
 			a += 2;
 		}
 	}
 }
 
 void
+datadump(void)
+{
+	word a, w, r;
+	struct sym *s;
+
+	if (!aout.datasz)
+		return;
+	printf(".data\n");
+	while(addr < memsz){
+		s = findsym(03, addr);
+		w = mem[addr/2];
+		if (reloc)
+			r = reloc[addr/2];
+		// XXX make comment
+		dw(addr, w, r);
+		if(s)
+			printf("%.8s:\n", s->name);
+		printf("\t%s\n", fetch(0));
+	}
+}
+
+char
+symtype(int type)
+{
+	int tt = type & 037;
+	if (tt <= 4) {
+		char ret = "uatdb"[tt];
+		if (type & 040)		/* extern? */
+			ret ^= 040;	/* upper case */
+		return ret;
+	}
+	// in v6 024 is reg, 037 is filename?
+	return '?';
+}
+
+void
+bssdump() {
+	if (!aout.bsssz)
+		return;
+	printf(".bss\n");
+	// sort bss symbols by value, output "\t.=.+prevdelta\nlbl:" ??
+}
+
+void
 symdump(void)
 {
 	struct sym *s;
-	for(s = symtab; s < &symtab[nsym]; s++)
-		print("%.8s %o %o\n", s->name, s->type, s->val);
+	for(s = symtab; s < &symtab[nsym]; s++) {
+		if (s->type & 040)
+			printf(".globl %-8.8s /", s->name);
+		else
+			printf("/      %-8.8s  ", s->name);
+		printf(" %c %#o\n", symtype(s->type), s->val);
+	}
 }
 
 void
 usage(void)
 {
-	fprint(2, "usage: %s a.out\n");
-	exits("usage");
+	fprintf(stderr, "usage: das a.out\n");
+	exit(1);
 }
 
 void
@@ -322,14 +637,14 @@ main(int argc, char *argv[])
 
 	if(argc < 2)
 		usage();
-	fd = open(argv[1], OREAD);
+	fd = open(argv[1], O_RDONLY);
 	if(fd < 0)
-		sysfatal("cannot open %s", argv[1]);
+		sysfatal1("cannot open %s", argv[1]);
 	read(fd, &aout, 16);
-	print("%o. %o %o %o. %o. %o %o %o\n",
+	printf("/ %#o %u. %u. %u. %u. %#o %u. %u\n",
 		aout.magic,
-		aout.textsz, aout.datasz, aout.bsssz,
-		aout.symsz,
+		aout.textsz, aout.datasz,
+		aout.bsssz, aout.symsz,
 		aout.entry, aout.stacksz, aout.flag);
 	memsz = aout.textsz + aout.datasz;
 	mem = malloc(memsz);
@@ -339,7 +654,7 @@ main(int argc, char *argv[])
 		read(fd, reloc, memsz);
 	}
 	if(aout.symsz % 12)
-		sysfatal("botch in symbol table");
+		sysfatal0("botch in symbol table");
 	nsym = aout.symsz / 12;
 	symtab = malloc(nsym*sizeof(*symtab));
 	for(s = symtab; s < &symtab[nsym]; s++)
@@ -348,6 +663,8 @@ main(int argc, char *argv[])
 
 	symdump();
 	textdump();
+	datadump();
+	bssdump();
 
-	exits(nil);
+	exit(0);
 }
