@@ -595,6 +595,8 @@ static void set_arg_env(int want_env)
   for (i = Argc - 1; i != -1; i--) {		/* For each arg string */
     len = strlen(Argv[i]) + 1;			/* get its length */
     posn -= len;
+    if (posn & 1)			/* PLB: odd? */
+      posn--;				/* PLB: force even for brt0,s */
     memcpy(&dspace[posn], Argv[i], (size_t) len);
     aposn[i] = posn;
   }
