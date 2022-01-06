@@ -6,6 +6,8 @@
 # only ctime, printn, and printf differ,
 # and all only in the symbol sections of the files.
 
+export APOUT_ROOT=`pwd`/fs/root
+
 # extract /usr/lib/libb.a
 rm -rf libb
 mkdir libb
