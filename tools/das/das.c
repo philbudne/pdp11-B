@@ -27,6 +27,15 @@
 typedef u_int16_t word;
 typedef u_int8_t byte;
 
+/* symbol type in a.out namelist */
+#define N_TYPE 037
+#define  T_UND 0
+#define  T_ABS 01
+#define  T_TXT 02
+#define  T_DATA 03
+#define  T_BSS 04
+#define N_EXT 040
+
 void
 sysfatal0(char *str) {
     fprintf(stderr, "%s\n", str);
@@ -211,13 +220,17 @@ struct syscall {
 	{ 0, "pipe" },		/* 42. v4 (noop in nsys) */
 	{ 1, "times" },		/* 43. v4 */
 	{ 4, "profil" },	/* 44. v4 (not in assembler; noop in nsys) */
-	{ 0, "tiu" },		/* 45. (name from nsys/v6; getfp in v7m; lock in svr1) */
-	/*		CB 2.1 syscb: umask=1, reboot=2, lock=3, sprofil=4, ucore=5, getcsw=? */
+	{ 0, "tiu" },		/* 45. (name from nsys/v6)
+				   getfp in v7m
+				   CB 2.1 syscb: umask=1, reboot=2, lock=3,
+					sprofil=4, ucore=5, getcsw=?
+				   lock in svr1)
+				*/
 	{ 0, "setgid" },	/* 46. v4 (not in assembler) */
 	{ 0, "getgid" },	/* 47. v4 (not in assembler)*/
 	{ 2, "signal" },	/* 48. v4 */
 	/* from v7 sysent.c: */
-	/* 49 = reserved for USG (msg in CB 2.1; IPC Messages)
+	/* 49 = reserved for USG (msg in CB 2.1; SVR1 IPC Messages)
 	/* 50 = reserved for USG (Reserved for local use in SVR1) */
 	/* 51 = acct (1 arg) */
 	/* 52 = phys (4 args); SVR1 shm (in CB 2.3?) */
@@ -225,8 +238,10 @@ struct syscall {
 	/* 54 = ioctl (3 args) */
 	/* 55 = readwrite ("in abeyance"); reboot in 4.1BSD */
 	/* 56 = mpxcall (2 args) */
-	/* 57 = reserved for USG (uts in SVR1 (uname, ustat); in Sys III?) */
-	/*	CB 2.1 "cbsys": uname=0; "pwbsys" (0=uname, 1=udata, 2=ustat) */
+	/* 57 = reserved for USG
+		PWB: "pwbsys" (0=uname, 1=udata, 2=ustat)
+		CB 2.1 "cbsys": uname=0; 
+		"uts" in SVR1 (uname, ustat); in Sys III?) */
 	/* 58 = reserved for USG: {get,free,dis,swit}maus in CB 2.1 */
 	/*		"multi-access user space"; dedicated portion of memory */
 	/*		swap functions in SVR2; "local functions" in 2.9BSD */
@@ -512,16 +527,21 @@ getreloc(word r)
 }
 
 void
-dw(word a, word w, word r) {
+dw(word a, word w, word r, word seg) {
     // XXX target column for comment
     // XXX output using fetch()?
-    char hi = w >> 8;
-    char lo = w & 0377;
-    printf("\t\t/ %06o: %06o %d. %c%c %-10s\n",
-	   a, w, (short)w,
-	   (lo >= ' ' && lo <= '~') ? lo : '.',
-	   (hi >= ' ' && hi <= '~') ? hi : '.',
-	   getreloc(r));
+    unsigned char hi = w >> 8;
+    unsigned char lo = w & 0377;
+    struct sym *s = findsym(seg, w);	/* word value as symbol */
+
+    printf("\t\t/ %06o: %06o (%s) %d. %#o %#o %c%c %-10s\n",
+	   a, w,
+	   (s ? s->name : ""),		/* symbol (in same segment) */
+	   (short)w,			/* signed decimal */
+	   lo, hi,			/* octal bytes */
+	   (lo >= ' ' && lo <= '~') ? lo : '.', /* ASCII char */
+	   (hi >= ' ' && hi <= '~') ? hi : '.', /* ASCII char */
+	   getreloc(r));		/* external sym ref */
 }
 
 void
@@ -552,14 +572,14 @@ textdump(void)
 		}
 		a += 2;
 
-		dw(oa, w, r);
+		dw(oa, w, r, 02);
 
 		// instruction operands
 		while(a < addr){
 			w = mem[a/2];
 			if (reloc)
 				r = reloc[a/2];
-			dw(a, w, r);
+			dw(a, w, r, 02);
 			a += 2;
 		}
 	}
@@ -575,12 +595,12 @@ datadump(void)
 		return;
 	printf(".data\n");
 	while(addr < memsz){
-		s = findsym(03, addr);
 		w = mem[addr/2];
+		s = findsym(03, addr);
 		if (reloc)
 			r = reloc[addr/2];
 		// XXX make comment
-		dw(addr, w, r);
+		dw(addr, w, r, 03);
 		if(s)
 			printf("%.8s:\n", s->name);
 		printf("\t%s\n", fetch(0));
@@ -590,23 +610,51 @@ datadump(void)
 char
 symtype(int type)
 {
-	int tt = type & 037;
-	if (tt <= 4) {
-		char ret = "uatdb"[tt];
-		if (type & 040)		/* extern? */
-			ret ^= 040;	/* upper case */
-		return ret;
-	}
-	// in v6 024 is reg, 037 is filename?
-	return '?';
+	int tt = type & N_TYPE;
+	char c;
+	// 05 is common region (internal use only?)
+	if (tt <= T_BSS)
+		c = "uatdb"[tt];
+	else if (tt == 024)
+		c = 'r';		/* v6 reg? */
+	else if (tt == 037)
+		c = 'f';		/* file */
+	else
+		return '?';
+	if (type & N_EXT)		/* extern? */
+		c ^= 040;		/* upper case */
+	return c;
 }
 
+static int
+compare_nlist_entry(const void *a, const void *b) {
+    return ((struct sym *)a)->val - ((struct sym *)b)->val;
+}
+
+// NOTE!! reorders symtab (do it after initial symbol dump??) */
 void
 bssdump() {
+	word prev = 0;
+	struct sym *s;
 	if (!aout.bsssz)
 		return;
 	printf(".bss\n");
-	// sort bss symbols by value, output "\t.=.+prevdelta\nlbl:" ??
+	qsort(symtab, nsym, sizeof(struct sym),
+	      compare_nlist_entry);
+	for(s = symtab; s < &symtab[nsym]; s++) {
+		if ((s->type & N_TYPE) != T_BSS)
+			continue;
+		if (s->val > prev) {
+			printf("\t.=.+%o\n", s->val - prev);
+			prev = s->val;
+		}
+		if (s->type & N_EXT)
+			printf(".globl %.8s\n", s->name);
+		printf("%.8s:\n", s->name);
+	}
+	if (aout.bsssz > prev)
+		printf("\t.=.+%o\n", aout.bsssz - prev);
+
 }
 
 void
@@ -614,7 +662,7 @@ symdump(void)
 {
 	struct sym *s;
 	for(s = symtab; s < &symtab[nsym]; s++) {
-		if (s->type & 040)
+		if (s->type & N_EXT)
 			printf(".globl %-8.8s /", s->name);
 		else
 			printf("/      %-8.8s  ", s->name);
