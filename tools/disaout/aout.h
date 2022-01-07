@@ -72,11 +72,11 @@ struct sym0407 {
 #define ASYM_TEXT	02
 #define ASYM_DATA	03
 #define ASYM_BSS	04
-#define ASYM_UNDEFEXT	40
-#define ASYM_ABSEXT	41
-#define ASYM_TEXTEXT	42
-#define ASYM_DATAEXT	43
-#define ASYM_BSSDEXT	44
+#define ASYM_UNDEFEXT	040
+#define ASYM_ABSEXT	041
+#define ASYM_TEXTEXT	042
+#define ASYM_DATAEXT	043
+#define ASYM_BSSDEXT	044
 
 /*
  * Because V5, V6, V7 and 2.11BSD share several magic numbers in their a.out

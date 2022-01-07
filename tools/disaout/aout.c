@@ -157,7 +157,9 @@ int load_a_out(const char *file, struct exec * e)
 
   				/* If there is a symbol table, load it */
       if (e->a_syms)
-        load_0407_symbols(zin, 16 + e->a_text + e->a_data,e->a_syms,e->a_entry);
+        load_0407_symbols(zin, 16 + e->a_text + e->a_data +
+			  (e->a_flag != 1 ? e->a_text + e->a_data : 0),
+			  e->a_syms,e->a_entry);
       break;
     case ANY_ROTEXT:
       					/* Move back to end of V5/6/7 header */
