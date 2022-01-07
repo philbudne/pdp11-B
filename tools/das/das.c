@@ -532,7 +532,7 @@ dw(word a, word w, word r, word seg) {
     // XXX output using fetch()?
     unsigned char hi = w >> 8;
     unsigned char lo = w & 0377;
-    struct sym *s = findsym(seg, w);	/* word value as symbol */
+    struct sym *s = findsym(seg, w & 07777); /* word value as symbol */
 
     printf("\t\t/ %06o: %06o (%s) %d. %#o %#o %c%c %-10s\n",
 	   a, w,
@@ -644,10 +644,10 @@ bssdump() {
 	for(s = symtab; s < &symtab[nsym]; s++) {
 		if ((s->type & N_TYPE) != T_BSS)
 			continue;
-		if (s->val > prev) {
+		if (prev) {
 			printf("\t.=.+%o\n", s->val - prev);
-			prev = s->val;
 		}
+		prev = s->val;
 		if (s->type & N_EXT)
 			printf(".globl %.8s\n", s->name);
 		printf("%.8s:\n", s->name);
