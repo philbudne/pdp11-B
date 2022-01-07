@@ -49,15 +49,15 @@ xread() {
   return buf[0];
 }
 
+/* PLB: switched to putchar, so can mix w/ printf */
+/* (AND putchar is the PDP-11 libb routine for writing a char (or two)) */
 xwrite(c) {
   char buf[2];
   if (c & 0xff00) {
-    buf[0] = (c >> 8) & 0xff;
-    buf[1] = c & 0xff;
-    write(fout, buf, 2);
+    putchar((c >> 8) & 0xff);
+    putchar(c & 0xff);
   } else {
-    buf[0] = c & 0xff;
-    write(fout, buf, 1);
+    putchar(c & 0xff);
   }
 }
 
@@ -67,6 +67,40 @@ xflush() {
 #define read xread
 #define write xwrite
 #define flush xflush
+
+void
+header() {
+    printf("\tjmp\t9f\n");
+}
+
+/* print pointer label */
+void
+pp(n) {
+  printf("p%d", n);
+}
+
+void
+trailer() {
+    extern ptrs;
+    int i;
+
+    /* output code to whack char pointers to word pointers */
+
+    /* see discussion in brt1.s; _COULD_ output the actual pointers to wack
+     * here (instead of pointers to pointers) by writing them to a temp file
+     * (would need an additional temp symbol for each string lit?)
+     */
+    printf(".globl chain\n");
+    printf("9:\tjsr\tr5,chain\n");
+    i = 0;
+    while (i < ptrs) {
+	write('\t');
+	pp(i);				/* pointer to pointer */
+	write('\n');
+	i = i + 1;
+    }
+    printf("\t0\n");
+}
 
 main(int argc, char **argv) {
   extern symtab[], eof, *ns, nerror;
@@ -85,10 +119,12 @@ main(int argc, char **argv) {
     }
   }
 
+  header();
   while (!eof) {
     ns = symtab + 51;
     extdef();
   }
+  trailer();
   return(nerror!=0);
 }
 
@@ -273,11 +309,10 @@ getstr() {
   i = 1;
 loop:
   if ((c = mapch('"')) < 0) {
-    write('\\e');
     return(i);
   }
-  /* remap to assembler <> escapes */
-  /* note: mapch handles *( and *) */
+  /* remap to assembler <> string escapes */
+  /* note: mapch also handles *( and *) */
   if (c == '\n')	// from *n
     write('\\n');
   else if (c == '\t')	// from *t
@@ -288,6 +323,8 @@ loop:
     write('\\0');
   else if (c == '\r')	// from *r
     write('\\r');
+  else if (c == '<' || c == '>')
+    printf("\\%c", c);
   else
     write(c);
   i = i+1;
@@ -334,14 +371,23 @@ mapch(c) {
   return(a);
 }
 
-/* signal that last auto/ext is an lvalue */
-void plv() {
-  write('PL');
-  write('V\n');
+/* signal that prev (auto/ext) inst is an lvalue */
+void
+plv() {
+  printf("PLV\n");
+}
+
+/* output a word pointer to the next word (converted at runtime) */
+void
+wordptr() {
+    extern ptrs;
+    pp(ptrs);
+    printf(":.+2\n");
+    ptrs = ptrs+1;
 }
 
 void expr(lev,lvalue) {
-  extern peeksym, *csym, cval, isn, cleanup;
+  extern peeksym, *csym, cval, isn, cleanup, ptrs;
   auto o;
 
   o = symbol();
@@ -359,37 +405,25 @@ case21:
   }
 
   if (o==122) { /* string */
-    // PLB undebugged on PDP-11
-    // put in data segment and use assembler <...>???
-    // (would not work w/ sep I/D)
-    // use string constant instead of char pairs!!!!
+    /* put in data segment and use assembler <...> */
+    /* (would not work w/ sep I/D) */
     if (cleanup) {
       write('i');
       cleanup = 0;
     }
     write('x;');
-    write('1f');
+    pp(ptrs);				/* ref to next wordptr */
     write('\n');
-
-    write('.d');
-    write('at');
-    write('a\n');
-
-    write('1:');
-    write('.+');
-    write('2\n');
-
+    /* PLB: .data to avoid jumping around inline string or using tmp file */
+    printf(".data\n");
+    printf(".even\n");
+    wordptr();				/* writes "pN:.+2" */
     write('<');
     getstr();
+    write('\\0');
     write('>\n');
-
-    write('.e');
-    write('ve');
-    write('n\n');
-
-    write('.t');
-    write('ex');
-    write('t\n');
+    printf(".even\n");
+    printf(".text\n");
     goto loop; 
   }
 
@@ -518,7 +552,7 @@ loop:
   if (o==6) { /* ( */
     o = symbol();
     if (o==7) /* ) */
-      gen('n',0); /* mcall */
+      gen('n',1); /* mcall */
     else {
       gen('n',2); /* mark */
       peeksym = o;
@@ -595,8 +629,7 @@ void extdef() {
   o=symbol();
  
   if (o==2 | o==6) { /* $( ( */
-    write('.+');
-    write('2\n');
+    printf(".+2\n");  /* code ptrs are char ptrs */
     nauto = 4;
     if (o==6) { /* ( */
       declare(8); /* param */
@@ -640,8 +673,7 @@ void extdef() {
     }
     if (o!=5) /* ] */
       goto syntax;
-    write('.+');
-    write('2\n');
+    wordptr();
     if ((o=symbol())==1) /* ; */
       goto done;
     while (o==21 | o==41) { /* number - */
@@ -665,7 +697,7 @@ done:
     if (c>0) {
       write('.=');
       write('.+');
-      number(c);			/* XXX 2*? */
+      number(2*c);
       write('\n');
     }
     return;
@@ -776,7 +808,7 @@ next:
     if (!*csym) {
       *csym = 2; /* param */
       csym[1] = isn;
-      isn = isn+1;			/* XXX +2? */
+      isn = isn+1;
     } else if (*csym != 2) {
       error('rd');
       goto next;
@@ -848,11 +880,19 @@ label(n) {
   write(':\n');
 }
 
-/* PLB: must be octal for ops */
+/* PLB octal for ops */
 printn(n) {
   if (n > 7) {
     printn(n >> 3);
     n = n & 7;
+  }
+  write(n + '0');
+}
+
+printd(n) {
+  if (n > 9) {
+    printn(n/10);
+    n = n % 10;
   }
   write(n + '0');
 }
@@ -890,7 +930,7 @@ void error(code) {
     name(csym + 2);
     write(' ');
   }
-  printn(line);
+  printd(line);		/* PLB in decimal! */
   write('\n');
   flush();
   fout = f;
@@ -937,3 +977,4 @@ int isn = 1; /* PLB start at l1 */
 int nerror;
 int nauto;
 int cleanup;
+int ptrs;
