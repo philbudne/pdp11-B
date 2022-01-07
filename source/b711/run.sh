@@ -1,6 +1,7 @@
 #!/bin/sh
 
 PROG=`basename $1 .b`
+shift
 
 APOUT=../../tools/apout/apout
 
@@ -31,4 +32,5 @@ mv a.out $PROG.o
 $APOUT $BIN/ld $PROG.o $BRT1 $USRLIB/libb.a $USRLIB/bilib.a $BRT2
 mv a.out $PROG
 
-$APOUT ./$PROG
+#DEBUG=-inst
+$APOUT $DEBUG ./$PROG $*
