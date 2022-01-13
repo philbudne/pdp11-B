@@ -323,7 +323,7 @@ loop:
     write('\\0');
   else if (c == '\r')	// from *r
     write('\\r');
-  else if (c == '<' || c == '>')
+  else if (c == '\\' || c == '>')
     printf("\\%c", c);
   else
     write(c);
