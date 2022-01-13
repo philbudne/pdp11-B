@@ -31,15 +31,14 @@
 	mov	(r0)+,r1	// get argc
 	beq	2f
 
+// make argv entries into word pointers
 // PLB NOTE! had to patch apout to put strings at even addrs!!
 // have (as yet) been unable to see what "unix72" kernel does
-1:	mov	(r0),r2
-	asr	r2		// make word addr
-	mov	r2,(r0)+	// store back and advance
+1:	asr	(r0)+		// make word addr
 	dec	r1
 	bne	1b
 
-// make argv a word pointer
+// make a word pointer to argv (argc is first entry)
 2:	mov	sp,r0		// get argv pointer
 	asr	r0		// make word addr
 	mov	r0,.argv
